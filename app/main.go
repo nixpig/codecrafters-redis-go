@@ -28,12 +28,18 @@ func main() {
 				os.Exit(1)
 			}
 
-			if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
-				fmt.Println(err)
-			}
+			go handleCommand(conn, []byte{})
 		}
 	}()
 
 	<-done
 	fmt.Println("Exiting...")
+}
+
+func handleCommand(conn net.Conn, cmd []byte) error {
+	if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
+		return err
+	}
+
+	return nil
 }
