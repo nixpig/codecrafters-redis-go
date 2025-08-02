@@ -22,13 +22,21 @@ func main() {
 
 	go func() {
 		for {
+			b := make([]byte, 1024)
+
 			conn, err := listener.Accept()
 			if err != nil {
 				fmt.Println("Error accepting connection: ", err.Error())
 				os.Exit(1)
 			}
 
-			go handleCommand(conn, []byte{})
+			n, err := conn.Read(b)
+			if err != nil {
+				// TODO: log error
+				continue
+			}
+
+			go handleCommand(conn, b[:n])
 		}
 	}()
 
@@ -37,8 +45,13 @@ func main() {
 }
 
 func handleCommand(conn net.Conn, cmd []byte) error {
-	if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
-		return err
+	switch string(cmd) {
+	case "+PING\r\n":
+		if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
+			// TODO: log error
+			// TODO: write error back
+			return err
+		}
 	}
 
 	return nil
