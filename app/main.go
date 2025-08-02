@@ -39,6 +39,8 @@ func main() {
 }
 
 func handle(conn net.Conn) error {
+	defer conn.Close()
+
 	scanner := bufio.NewScanner(conn)
 
 	for scanner.Scan() {
@@ -47,7 +49,7 @@ func handle(conn net.Conn) error {
 
 		switch text {
 		case "PING":
-			if _, err := conn.Write([]byte("+PING\r\n")); err != nil {
+			if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
 				// TODO: log error
 				continue
 			}
