@@ -46,7 +46,7 @@ func main() {
 
 func handleCommand(conn net.Conn, cmd []byte) error {
 	switch string(cmd) {
-	case "+PING\r\n":
+	case "PING":
 		if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
 			// TODO: log error
 			// TODO: write error back
