@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 )
 
 func main() {
@@ -22,21 +24,13 @@ func main() {
 
 	go func() {
 		for {
-			b := make([]byte, 1024)
-
 			conn, err := listener.Accept()
 			if err != nil {
 				fmt.Println("Error accepting connection: ", err.Error())
 				os.Exit(1)
 			}
 
-			n, err := conn.Read(b)
-			if err != nil {
-				// TODO: log error
-				continue
-			}
-
-			go handleCommand(conn, b[:n])
+			go handle(conn)
 		}
 	}()
 
@@ -44,13 +38,19 @@ func main() {
 	fmt.Println("Exiting...")
 }
 
-func handleCommand(conn net.Conn, cmd []byte) error {
-	switch string(cmd) {
-	case "PING":
-		if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
-			// TODO: log error
-			// TODO: write error back
-			return err
+func handle(conn net.Conn) error {
+	scanner := bufio.NewScanner(conn)
+
+	for scanner.Scan() {
+		text := scanner.Text()
+		text = strings.TrimSpace(text)
+
+		switch text {
+		case "PING":
+			if _, err := conn.Write([]byte("+PING\r\n")); err != nil {
+				// TODO: log error
+				continue
+			}
 		}
 	}
 
