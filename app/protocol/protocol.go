@@ -1,153 +1,258 @@
 package protocol
 
 import (
+	"bytes"
+	"fmt"
 	"strconv"
-	"strings"
 )
 
-type RESP interface {
-	String() string
+type DataPrefix byte
+type DataType int
+
+type Message struct {
+	dataType DataType
+	data     any
 }
 
-// ---
-
-type BulkString struct {
-	data string
+type Messager interface {
+	Type() DataType
+	Data() any
 }
 
-func (b *BulkString) String() string {
-	return "$" + strconv.Itoa(len(b.data)) + "\r\n" + b.data + "\r\n"
+const (
+	PrefixBulkString   DataPrefix = '$'
+	PrefixSimpleString DataPrefix = '+'
+	PrefixBulkError    DataPrefix = '!'
+	PrefixError        DataPrefix = '-'
+	PrefixInteger      DataPrefix = ':'
+	PrefixArray        DataPrefix = '*'
+	PrefixBool         DataPrefix = '#'
+	PrefixDouble       DataPrefix = ','
+	PrefixBigNumber    DataPrefix = '('
+	PrefixMap          DataPrefix = '%'
+	PrefixAttributes   DataPrefix = '|'
+	PrefixSet          DataPrefix = '~'
+	PrefixPush         DataPrefix = '>'
+	// PrefixVerbatimString DataPrefix = '='
+)
+
+const (
+	DataBulkString DataType = iota
+	DataSimpleString
+	DataArray
+	DataError
+	DataBulkError
+	DataInteger
+	DataNull
+	DataBool
+	DataDouble
+	DataBigNumber
+	DataMap
+	DataAttributes
+	DataSet
+	DataPush
+
+// VerbatimString
+// NullBulkString
+// NullArray
+// Null
+// PositiveInf
+// NegativeInf
+// NaN
+)
+
+var dataMap = map[DataPrefix]DataType{
+	PrefixBulkString:   DataBulkString,
+	PrefixSimpleString: DataSimpleString,
+	PrefixArray:        DataArray,
+	PrefixBulkError:    DataBulkError,
+	PrefixError:        DataError,
+	PrefixInteger:      DataInteger,
+	PrefixBool:         DataBool,
+	PrefixDouble:       DataDouble,
+	PrefixBigNumber:    DataBigNumber,
+	PrefixMap:          DataMap,
+	PrefixAttributes:   DataAttributes,
+	PrefixSet:          DataSet,
+	PrefixPush:         DataPush,
 }
 
-func NewBulkString(data string) *BulkString {
-	return &BulkString{data}
+func (c *Message) Type() DataType {
+	return c.dataType
 }
 
-// ---
-
-func NewNullBulkString() string {
-	return "$-1\r\n"
-}
-
-func NewSimpleString(data string) string {
-	return "+" + data + "\r\n"
-}
-
-func NewError(prefix, msg string) string {
-	return "-" + prefix + " " + msg + "\r\n"
-}
-
-func NewBulkError(prefix, msg string) string {
-	return "!" + strconv.Itoa(
-		len(prefix)+len(msg)+1,
-	) + "\r\n" + prefix + " " + msg + "\r\n"
-}
-
-func NewInteger(num int) string {
-	return ":" + strconv.Itoa(num) + "\r\n"
-}
-
-func NewArray(items []RESP) string {
-	var sb strings.Builder
-
-	sb.WriteString("*" + strconv.Itoa(len(items)) + "\r\n")
-
-	for _, item := range items {
-		sb.WriteString(item.String())
+// Unmarshal parses the RESP-encoded byte data in b and returns a Command and error
+func Unmarshal(b []byte) (*Message, error) {
+	if len(b) == 0 {
+		return nil, fmt.Errorf("no data")
 	}
 
-	return sb.String()
-}
-
-func NewNullArray() string {
-	return "*-1\r\n"
-}
-
-func NewNull() string {
-	return "_\r\n"
-}
-
-func NewBool(val bool) string {
-	var v string
-	if val {
-		v = "t"
-	} else {
-		v = "f"
+	commandType, ok := dataMap[DataPrefix(b[0])]
+	if !ok {
+		return nil, fmt.Errorf("invalid prefix")
 	}
 
-	return "#" + v + "\r\n"
-}
+	var data any
 
-func NewDouble(val float64) string {
-	return "," + strconv.FormatFloat(val, 'G', -1, 64) + "\r\n"
-}
+	switch commandType {
+	case DataBulkString:
+		data = ""
 
-func NewPositiveInf() string {
-	return ",inf\r\n"
-}
+	case DataSimpleString:
+		data = ""
 
-func NewNegativeInf() string {
-	return ",-inf\r\n"
-}
-
-func NewNaN() string {
-	return ",nan\r\n"
-}
-
-func NewBigNumber(val string) string {
-	return "(" + val + "\r\n"
-}
-
-func NewVerbatimString(enc, val string) string {
-	return "=" + strconv.Itoa(
-		len(enc)+len(val)+1,
-	) + "\r\n" + enc + ":" + val + "\r\n"
-}
-
-func NewMap(items map[string]RESP) string {
-	var sb strings.Builder
-
-	sb.WriteString("%" + strconv.Itoa(len(items)) + "\r\n")
-
-	for k, v := range items {
-		sb.WriteString(k + v.String())
+	case DataArray:
+		data = []Message{}
 	}
 
-	return sb.String()
+	return &Message{
+		dataType: commandType,
+		data:     data,
+	}, nil
 }
 
-func NewAttributes(items map[string]RESP) string {
-	var sb strings.Builder
+// Marshal encodes Command to RESP-encoded byte slice
+func Marshal(cmd *Message) ([]byte, error) {
+	switch data := (cmd.data).(type) {
+	case string:
+		switch cmd.dataType {
+		case DataBulkString:
+			return []byte(
+				"$" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n",
+			), nil
 
-	sb.WriteString("|" + strconv.Itoa(len(items)) + "\r\n")
+		case DataSimpleString:
+			return []byte("+" + data + "\r\n"), nil
 
-	for k, v := range items {
-		sb.WriteString(k + v.String())
+		case DataError:
+			return []byte("-" + data + "\r\n"), nil
+
+		case DataBulkError:
+			return []byte(
+				"!" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n",
+			), nil
+
+		case DataBigNumber:
+			return []byte("(" + data + "\r\n"), nil
+		}
+
+	case []Message:
+		switch cmd.dataType {
+		case DataArray:
+			var buf bytes.Buffer
+
+			buf.WriteString("*" + strconv.Itoa(len(data)) + "\r\n")
+
+			for _, item := range data {
+				b, err := Marshal(&item)
+				if err != nil {
+					return nil, fmt.Errorf("invalid data")
+				}
+				buf.Write(b)
+			}
+
+			return buf.Bytes(), nil
+
+		case DataPush:
+			data, ok := (cmd.data).([]Message)
+			if !ok {
+				return nil, fmt.Errorf("invalid data")
+			}
+
+			var buf bytes.Buffer
+
+			buf.WriteString(">" + strconv.Itoa(len(data)) + "\r\n")
+
+			for _, item := range data {
+				d, err := Marshal(&item)
+				if err != nil {
+					return nil, fmt.Errorf("invalid data")
+				}
+
+				buf.Write(d)
+			}
+
+			return buf.Bytes(), nil
+		}
+
+	case int:
+		switch cmd.dataType {
+		case DataInteger:
+			return []byte(":" + strconv.Itoa(data) + "\r\n"), nil
+		}
+
+	case bool:
+		switch cmd.dataType {
+		case DataBool:
+			var v string
+			if data {
+				v = "t"
+			} else {
+				v = "f"
+			}
+
+			return []byte("#" + v + "\r\n"), nil
+		}
+
+	case float64:
+		switch cmd.dataType {
+		case DataDouble:
+			return []byte(
+				"," + strconv.FormatFloat(data, 'G', -1, 64) + "\r\n",
+			), nil
+		}
+
+	case map[string]Message:
+		switch cmd.dataType {
+
+		case DataMap:
+			var buf bytes.Buffer
+
+			buf.WriteString("%" + strconv.Itoa(len(data)) + "\r\n")
+
+			for k, v := range data {
+				buf.WriteString(k)
+				d, err := Marshal(&v)
+				if err != nil {
+					return nil, fmt.Errorf("invalid data")
+				}
+
+				buf.Write(d)
+			}
+
+			return buf.Bytes(), nil
+
+		case DataAttributes:
+			var buf bytes.Buffer
+
+			buf.WriteString("|" + strconv.Itoa(len(data)) + "\r\n")
+
+			for k, v := range data {
+				buf.WriteString(k)
+				d, err := Marshal(&v)
+				if err != nil {
+					return nil, fmt.Errorf("invalid data")
+				}
+				buf.Write(d)
+			}
+
+			return buf.Bytes(), nil
+		}
+
+	case map[string]struct{}:
+		switch cmd.dataType {
+		case DataSet:
+			var buf bytes.Buffer
+
+			buf.WriteString("~" + strconv.Itoa(len(data)) + "\r\n")
+
+			for k := range data {
+				buf.WriteString(k)
+			}
+
+			return buf.Bytes(), nil
+		}
 	}
 
-	return sb.String()
-}
-
-func NewSet(items map[RESP]struct{}) string {
-	var sb strings.Builder
-
-	sb.WriteString("~" + strconv.Itoa(len(items)) + "\r\n")
-
-	for k := range items {
-		sb.WriteString(k.String())
-	}
-
-	return sb.String()
-}
-
-func NewPush(items ...RESP) string {
-	var sb strings.Builder
-
-	sb.WriteString(">" + strconv.Itoa(len(items)) + "\r\n")
-
-	for _, item := range items {
-		sb.WriteString(item.String())
-	}
-
-	return sb.String()
+	return nil, fmt.Errorf("invalid command")
 }
