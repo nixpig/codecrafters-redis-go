@@ -6,15 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type scenario struct {
-	dataType   DataType
-	dataPrefix DataPrefix
-	data       any
-	expected   []byte
+type marshalScenario struct {
+	dataType DataType
+	data     any
+	expected []byte
 }
 
 func TestMarshalData(t *testing.T) {
-	scenarios := map[string]scenario{
+	scenarios := map[string]marshalScenario{
 		"marshal bulk string": {
 			dataType: DataBulkString,
 			data:     "a bulk string",
@@ -166,14 +165,4 @@ func testMarshalData(
 	b, err := Marshal(msg)
 	require.NoError(t, err)
 	require.Equal(t, expected, b)
-}
-
-func testUnmarshalData(
-	t *testing.T,
-	data []byte,
-	expected Message,
-) {
-	msg, err := Unmarshal(data)
-	require.NoError(t, err)
-	require.Equal(t, expected, msg)
 }
