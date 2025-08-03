@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 )
 
@@ -18,6 +17,10 @@ type Messager interface {
 	Type() DataType
 	Data() any
 }
+
+const (
+	terminator = "\r\n"
+)
 
 const (
 	PrefixBulkString   DataPrefix = '$'
@@ -52,13 +55,13 @@ const (
 	DataSet
 	DataPush
 
-// VerbatimString
-// NullBulkString
-// NullArray
-// Null
-// PositiveInf
-// NegativeInf
-// NaN
+	// VerbatimString
+	// NullBulkString
+	// NullArray
+	// Null
+	// PositiveInf
+	// NegativeInf
+	// NaN
 )
 
 var dataMap = map[DataPrefix]DataType{
@@ -81,15 +84,21 @@ func (c *Message) Type() DataType {
 	return c.dataType
 }
 
+func (c *Message) Data() any {
+	return c.data
+}
+
 // Unmarshal parses the RESP-encoded byte data in b and returns a Command and error
 func Unmarshal(b []byte) (*Message, error) {
 	if len(b) == 0 {
-		return nil, fmt.Errorf("no data")
+		return nil, NewErrInvalidData("zero length data")
 	}
 
-	commandType, ok := dataMap[DataPrefix(b[0])]
+	prefix := DataPrefix(b[0])
+
+	commandType, ok := dataMap[prefix]
 	if !ok {
-		return nil, fmt.Errorf("invalid prefix")
+		return nil, NewErrInvalidCommand("invalid command: " + string(b[0]))
 	}
 
 	var data any
@@ -99,10 +108,18 @@ func Unmarshal(b []byte) (*Message, error) {
 		data = ""
 
 	case DataSimpleString:
-		data = ""
+		data = string(b[1:])
 
+	// TODO: get this working
 	case DataArray:
-		data = []Message{}
+		length, p, ok := bytes.Cut(b[1:], []byte(terminator))
+		if !ok {
+			return nil, NewErrInvalidData("invalid data")
+		}
+
+		n, _ := strconv.Atoi(string(length))
+		data := make([]Message, n)
+
 	}
 
 	return &Message{
@@ -113,77 +130,71 @@ func Unmarshal(b []byte) (*Message, error) {
 
 // Marshal encodes Command to RESP-encoded byte slice
 func Marshal(cmd *Message) ([]byte, error) {
+	var buf bytes.Buffer
+
 	switch data := (cmd.data).(type) {
 	case string:
 		switch cmd.dataType {
 		case DataBulkString:
-			return []byte(
-				"$" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n",
-			), nil
+			buf.WriteByte(byte(PrefixBulkString))
+			buf.WriteString(strconv.Itoa(len(data)) + terminator + data)
 
 		case DataSimpleString:
-			return []byte("+" + data + "\r\n"), nil
+			buf.WriteByte(byte(PrefixSimpleString))
+			buf.WriteString(data)
 
 		case DataError:
-			return []byte("-" + data + "\r\n"), nil
+			buf.WriteByte(byte(PrefixError))
+			buf.WriteString(data)
 
 		case DataBulkError:
-			return []byte(
-				"!" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n",
-			), nil
+			buf.WriteByte(byte(PrefixBulkError))
+			buf.WriteString(strconv.Itoa(len(data)) + terminator + data)
 
 		case DataBigNumber:
-			return []byte("(" + data + "\r\n"), nil
+			buf.WriteByte(byte(PrefixBigNumber))
+			buf.WriteString(data)
 		}
 
 	case []Message:
 		switch cmd.dataType {
 		case DataArray:
-			var buf bytes.Buffer
-
-			buf.WriteString("*" + strconv.Itoa(len(data)) + "\r\n")
+			buf.WriteByte(byte(PrefixArray))
+			buf.WriteString(strconv.Itoa(len(data)))
 
 			for _, item := range data {
 				b, err := Marshal(&item)
 				if err != nil {
-					return nil, fmt.Errorf("invalid data")
+					return nil, NewErrInvalidData("invalid data")
 				}
 				buf.Write(b)
 			}
 
-			return buf.Bytes(), nil
-
 		case DataPush:
-			data, ok := (cmd.data).([]Message)
-			if !ok {
-				return nil, fmt.Errorf("invalid data")
-			}
-
-			var buf bytes.Buffer
-
-			buf.WriteString(">" + strconv.Itoa(len(data)) + "\r\n")
+			buf.WriteByte(byte(PrefixPush))
+			buf.WriteString(strconv.Itoa(len(data)))
 
 			for _, item := range data {
 				d, err := Marshal(&item)
 				if err != nil {
-					return nil, fmt.Errorf("invalid data")
+					return nil, NewErrInvalidData("invalid data")
 				}
 
 				buf.Write(d)
 			}
-
-			return buf.Bytes(), nil
 		}
 
 	case int:
 		switch cmd.dataType {
 		case DataInteger:
-			return []byte(":" + strconv.Itoa(data) + "\r\n"), nil
+			buf.WriteByte(byte(PrefixInteger))
+			buf.WriteString(strconv.Itoa(data))
 		}
 
 	case bool:
 		switch cmd.dataType {
 		case DataBool:
+			buf.WriteByte(byte(PrefixBool))
 			var v string
 			if data {
 				v = "t"
@@ -191,68 +202,59 @@ func Marshal(cmd *Message) ([]byte, error) {
 				v = "f"
 			}
 
-			return []byte("#" + v + "\r\n"), nil
+			buf.WriteString(v)
 		}
 
 	case float64:
 		switch cmd.dataType {
 		case DataDouble:
-			return []byte(
-				"," + strconv.FormatFloat(data, 'G', -1, 64) + "\r\n",
-			), nil
+			buf.WriteByte(byte(PrefixDouble))
+			buf.WriteString(strconv.FormatFloat(data, 'G', -1, 64))
 		}
 
 	case map[string]Message:
 		switch cmd.dataType {
 
 		case DataMap:
-			var buf bytes.Buffer
-
-			buf.WriteString("%" + strconv.Itoa(len(data)) + "\r\n")
+			buf.WriteByte(byte(PrefixMap))
+			buf.WriteString(strconv.Itoa(len(data)))
 
 			for k, v := range data {
 				buf.WriteString(k)
 				d, err := Marshal(&v)
 				if err != nil {
-					return nil, fmt.Errorf("invalid data")
+					return nil, NewErrInvalidData("invalid data")
 				}
 
 				buf.Write(d)
 			}
-
-			return buf.Bytes(), nil
 
 		case DataAttributes:
-			var buf bytes.Buffer
-
-			buf.WriteString("|" + strconv.Itoa(len(data)) + "\r\n")
+			buf.WriteByte(byte(PrefixAttributes))
+			buf.WriteString(strconv.Itoa(len(data)))
 
 			for k, v := range data {
 				buf.WriteString(k)
 				d, err := Marshal(&v)
 				if err != nil {
-					return nil, fmt.Errorf("invalid data")
+					return nil, NewErrInvalidData("invalid data")
 				}
 				buf.Write(d)
 			}
-
-			return buf.Bytes(), nil
 		}
 
 	case map[string]struct{}:
 		switch cmd.dataType {
 		case DataSet:
-			var buf bytes.Buffer
-
-			buf.WriteString("~" + strconv.Itoa(len(data)) + "\r\n")
+			buf.WriteByte(byte(PrefixSet))
+			buf.WriteString(strconv.Itoa(len(data)))
 
 			for k := range data {
 				buf.WriteString(k)
 			}
-
-			return buf.Bytes(), nil
 		}
 	}
 
-	return nil, fmt.Errorf("invalid command")
+	buf.WriteString(terminator)
+	return buf.Bytes(), nil
 }
