@@ -142,6 +142,11 @@ func TestMarshalData(t *testing.T) {
 				"~2\r\n$13\r\na bulk string\r\n:13\r\n",
 			),
 		},
+		"marshal empty": {
+			dataType: DataType(99), // unknown type
+			data:     "misc. data",
+			expected: []byte(nil),
+		},
 	}
 
 	for name, d := range scenarios {
@@ -161,4 +166,14 @@ func testMarshalData(
 	b, err := Marshal(msg)
 	require.NoError(t, err)
 	require.Equal(t, expected, b)
+}
+
+func testUnmarshalData(
+	t *testing.T,
+	data []byte,
+	expected Message,
+) {
+	msg, err := Unmarshal(data)
+	require.NoError(t, err)
+	require.Equal(t, expected, msg)
 }
